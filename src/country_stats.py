@@ -19,7 +19,7 @@ eez = gpd.read_file(eez_file).to_crs(3832)
 
 def main(coastlines_file: Path = COASTLINES_FILE):
     hotspot_stats = (
-        gpd.read_file("data/contiguous_hotspots.gpkg")
+        gpd.read_file("data/output/contiguous_hotspots.gpkg")
         .groupby("ISO_Ter1")[
             ["total_population", "building_counts", "mangrove_area_ha"]
         ]
@@ -47,7 +47,7 @@ def main(coastlines_file: Path = COASTLINES_FILE):
         .reset_index()
         .rename(dict(ISO_Ter1="id"), axis=1)
     )
-    write_geojson(output, Path("data/country_summaries.geojson"))
+    write_geojson(output, Path("data/output/country_summaries.geojson"))
 
 
 def categorize_roc(roc: gpd.GeoDataFrame):

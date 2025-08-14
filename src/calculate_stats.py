@@ -81,9 +81,9 @@ def main():
 
     contiguous_hotspots = contiguous_hotspots.sjoin(eez[["geometry", "ISO_Ter1"]])
 
-    contiguous_hotspots.to_file("data/contiguous_hotspots.gpkg")
+    contiguous_hotspots.to_file("data/output/contiguous_hotspots.gpkg")
 
-    build_tiles(contiguous_hotspots, Path("data/contiguous_hotspots.pmtiles"))
+    build_tiles(contiguous_hotspots, Path("data/output/contiguous_hotspots.pmtiles"))
 
 
 def intersect_with_grid(non_point_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
