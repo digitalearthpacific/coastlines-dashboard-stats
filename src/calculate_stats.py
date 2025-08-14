@@ -1,6 +1,7 @@
 from pathlib import Path
 import urllib.request
 
+from antimeridian import fix_polygon
 from dep_tools.grids import grid
 from dep_tools.utils import search_across_180
 from exactextract import exact_extract
@@ -23,6 +24,7 @@ if not coastlines_file.exists():
     remote_coastlines_file = "https://s3.us-west-2.amazonaws.com/dep-public-data/dep_ls_coastlines/dep_ls_coastlines_0-7-0-55.gpkg"
     urllib.request.urlretrieve(remote_coastlines_file, coastlines_file)
 
+eez_file = Path("data/country_boundary_eez.geojson")
 if not eez_file.exists():
     read_dataframe(
         "https://pacificdata.org/data/dataset/964dbebf-2f42-414e-bf99-dd7125eedb16/resource/dad3f7b2-a8aa-4584-8bca-a77e16a391fe/download/country_boundary_eez.geojson"
@@ -205,7 +207,7 @@ import os
 
 def build_tiles(stats: gpd.GeoDataFrame, output_file: Path) -> None:
     stats = stats.copy().to_crs(4326)
-    # stats["geometry"] = stats.geometry.apply(shift_negative_longitudes)
+    stats["geometry"] = stats.geometry.apply(fix_polygon)
     output_geojson_path = output_file.parent / f"{output_file.stem}.geojson"
     output_pmtile_path = output_file.parent / f"{output_file.stem}.pmtiles"
     stats.to_file(output_geojson_path)
@@ -213,4 +215,5 @@ def build_tiles(stats: gpd.GeoDataFrame, output_file: Path) -> None:
 
 
 if __name__ == "__main__":
+    breakpoint()
     main()

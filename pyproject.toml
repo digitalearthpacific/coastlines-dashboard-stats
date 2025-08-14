@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = "~=3.10"
 dependencies = [
+    "antimeridian>=0.4.3",
     "dea-coastlines",
     "dep-tools",
     "exactextract>=0.2.2",

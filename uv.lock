@@ -569,6 +569,7 @@ name = "coastlines-stats"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "antimeridian" },
     { name = "dea-coastlines" },
     { name = "dep-tools" },
     { name = "exactextract" },
@@ -589,6 +590,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "antimeridian", specifier = ">=0.4.3" },
     { name = "dea-coastlines", git = "https://github.com/GeoscienceAustralia/dea-coastlines?rev=b7d07c0" },
     { name = "dep-tools", git = "https://github.com/digitalearthpacific/dep-tools.git" },
     { name = "exactextract", specifier = ">=0.2.2" },
