@@ -1,3 +1,7 @@
+from coastlines.vector import change_regress
+import geohash as gh
+
+
 def calculate_rates_of_change_over_polygons(polygons, ratesofchange_gdf):
     # Taken from hotspot calculations in continental.py. It's possible
     # they're close enough we could have a single function, but there
@@ -30,7 +34,9 @@ def calculate_rates_of_change_over_polygons(polygons, ratesofchange_gdf):
     )
 
     # Add rates of change back into dataframe
-    polygons[["rate_time", "incpt_time", "sig_time", "se_time", "outl_time"]] = rate_out
+    hotspot_values[["rate_time", "incpt_time", "sig_time", "se_time", "outl_time"]] = (
+        rate_out
+    )
 
     # Join aggregated values back to hotspot points after
     # dropping unused columns (regression intercept)
@@ -38,8 +44,9 @@ def calculate_rates_of_change_over_polygons(polygons, ratesofchange_gdf):
 
     # Generate a geohash UID for each point and set as index
     uids = (
-        hotspots_gdf.geometry.to_crs("EPSG:4326")
+        # collapsing to centroid here
+        polygons.geometry.centroid.to_crs("EPSG:4326")
         .apply(lambda x: gh.encode(x.y, x.x, precision=11))
         .rename("uid")
     )
-    hotspots_gdf = hotspots_gdf.set_index(uids)
+    return polygons.set_index(uids)
