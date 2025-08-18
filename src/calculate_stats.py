@@ -1,5 +1,5 @@
+import os
 from pathlib import Path
-import urllib.request
 
 from antimeridian import fix_polygon
 from dep_tools.grids import grid
@@ -9,36 +9,17 @@ import geopandas as gpd
 import numpy as np
 import odc.stac
 import pandas as pd
-from pyogrio import read_dataframe
+import pystac_client
 from tqdm import tqdm
 import xarray as xr
 
 tqdm.pandas()  # turn something on
 
-from regional_rates_of_change import calculate_rates_of_change_over_polygons
-
-EQUAL_AREA_CRS = 8859
-
-coastlines_file = Path("data/dep_ls_coastlines_0-7-0-55.gpkg")
-if not coastlines_file.exists():
-    remote_coastlines_file = "https://s3.us-west-2.amazonaws.com/dep-public-data/dep_ls_coastlines/dep_ls_coastlines_0-7-0-55.gpkg"
-    urllib.request.urlretrieve(remote_coastlines_file, coastlines_file)
-
-eez_file = Path("data/country_boundary_eez.geojson")
-if not eez_file.exists():
-    read_dataframe(
-        "https://pacificdata.org/data/dataset/964dbebf-2f42-414e-bf99-dd7125eedb16/resource/dad3f7b2-a8aa-4584-8bca-a77e16a391fe/download/country_boundary_eez.geojson"
-    ).to_file(eez_file)
-eez = gpd.read_file(eez_file).to_crs(3832)
-
-buildings_file = Path("data/dep_buildings_0-1-0.gpkg")
-if not buildings_file.exists():
-    remote_buildings_file = "https://dep-public-staging.s3.us-west-2.amazonaws.com/dep_osm_buildings/dep_buildings_0-1-0.gpkg"
-    urllib.request.urlretrieve(remote_buildings_file, buildings_file)
-buildings = gpd.read_file(buildings_file).to_crs(EQUAL_AREA_CRS)
+from config import COASTLINES_FILE, EEZ, EQUAL_AREA_CRS, OUTPUT_DIR
+from regional_rates_of_change import add_rates_of_change_calculations
 
 
-def main():
+def main(coastlines_file: Path = COASTLINES_FILE):
     hotspots = gpd.read_file(
         coastlines_file, layer="hotspots_zoom_3", engine="pyogrio", use_arrow=True
     )
@@ -55,7 +36,7 @@ def main():
     ratesofchange = gpd.read_file(
         coastlines_file, layer="rates_of_change", engine="pyogrio", use_arrow=True
     )
-    contiguous_hotspots = calculate_rates_of_change_over_polygons(
+    contiguous_hotspots = add_rates_of_change_calculations(
         contiguous_hotspots, ratesofchange
     )
     contiguous_hotspots = intersect_with_grid(contiguous_hotspots)
@@ -81,11 +62,11 @@ def main():
         .reindex(contiguous_hotspots.index, fill_value=0)
     )
 
-    contiguous_hotspots = contiguous_hotspots.sjoin(eez[["geometry", "ISO_Ter1"]])
+    contiguous_hotspots = contiguous_hotspots.sjoin(EEZ[["geometry", "ISO_Ter1"]])
 
-    contiguous_hotspots.to_file("data/output/contiguous_hotspots.gpkg")
+    contiguous_hotspots.to_file(OUTPUT_DIR / "output/contiguous_hotspots.gpkg")
 
-    build_tiles(contiguous_hotspots, Path("data/output/contiguous_hotspots.pmtiles"))
+    build_tiles(contiguous_hotspots, OUTPUT_DIR / "contiguous_hotspots.pmtiles")
 
 
 def intersect_with_grid(non_point_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -193,16 +174,10 @@ def total_population(gdf: gpd.GeoDataFrame):
         gdf.to_crs(pop_count.odc.crs),
         ["sum"],
         output="pandas",
-        #        include_geom=True,
-        #        include_cols=["column", "row"],
     )
     # exact_extract doesn't preserve index
     output.index = gdf.index
     return output
-
-
-# from dep_tools.utils import shift_negative_longitudes
-import os
 
 
 def build_tiles(stats: gpd.GeoDataFrame, output_file: Path) -> None:
@@ -215,5 +190,4 @@ def build_tiles(stats: gpd.GeoDataFrame, output_file: Path) -> None:
 
 
 if __name__ == "__main__":
-    breakpoint()
     main()

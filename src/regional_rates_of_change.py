@@ -1,22 +1,32 @@
-from coastlines.vector import change_regress
 import geohash as gh
+import geopandas as gpd
+
+from coastlines.vector import change_regress
+
+from common import categorize_roc
 
 
-def calculate_rates_of_change_over_polygons(polygons, ratesofchange_gdf):
+def add_rates_of_change_calculations(polygons, ratesofchange) -> gpd.GeoDataFrame:
+    output = calculate_rates_of_change_over_polygons(polygons, ratesofchange)
+    ratesofchange["roc_category"] = categorize_roc(ratesofchange)
+    breakpoint()
+    return output
+
+
+def calculate_rates_of_change_over_polygons(polygons, ratesofchange):
     # Taken from hotspot calculations in continental.py. It's possible
     # they're close enough we could have a single function, but there
     # are a few differences.
     # Spatial join rate of change points to each polygon
     hotspot_grouped = (
-        ratesofchange_gdf.loc[
-            ratesofchange_gdf.certainty == "good",
-            ratesofchange_gdf.columns.str.contains("dist_|geometry"),
+        ratesofchange.loc[
+            ratesofchange.certainty == "good",
+            ratesofchange.columns.str.contains("dist_|geometry"),
         ]
         .sjoin(polygons, predicate="within")
         .drop(columns=["geometry"])
         .groupby("index_right")
     )
-
     # Aggregate/summarise values by taking median of all points
     # within each buffered polygon
     hotspot_values = hotspot_grouped.median().round(2)
