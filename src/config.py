@@ -6,9 +6,11 @@ import geopandas as gpd
 from pyogrio import read_dataframe
 
 EQUAL_AREA_CRS = 8859
-VERSION = "0.1.1"
+VERSION = "0.0.1"
 OUTPUT_DIR = Path("data/output") / VERSION
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+CHANGE_THRESHOLD_KM_PER_YR = 2
 
 COASTLINES_FILE = Path("data/dep_ls_coastlines_0-7-0-55.gpkg")
 if not COASTLINES_FILE.exists():

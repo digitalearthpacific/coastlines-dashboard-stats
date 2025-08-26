@@ -177,14 +177,10 @@ wheels = [
 [[package]]
 name = "antimeridian"
 version = "0.4.3"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/jessjaco/antimeridian.git?branch=bbox-fix#b3d0a0f4ca6aebc5a21f57f98ba1374f0172e8fe" }
 dependencies = [
     { name = "numpy" },
     { name = "shapely" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/18/d9/40cda441a5483ae6b60ee8eec224b7933639a7a89a30f0e0d702eb16d8f6/antimeridian-0.4.3.tar.gz", hash = "sha256:3797f916e44b7b78c45933a2441bb163aff41ccd3c79483de71a1466a3f6f049", size = 12590276 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d7/fe/dcaa1c91a561c582afe815bdf01e482fb892c901867a36020cbab54c71d1/antimeridian-0.4.3-py3-none-any.whl", hash = "sha256:296fd75f7c5785c2112eb247ee847458e6940ee9ff9f099d85cf3bc2a61c629d", size = 14951 },
 ]
 
 [[package]]
@@ -590,7 +586,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "antimeridian", specifier = ">=0.4.3" },
+    { name = "antimeridian", git = "https://github.com/jessjaco/antimeridian.git?branch=bbox-fix" },
     { name = "dea-coastlines", git = "https://github.com/GeoscienceAustralia/dea-coastlines?rev=b7d07c0" },
     { name = "dep-tools", git = "https://github.com/digitalearthpacific/dep-tools.git" },
     { name = "exactextract", specifier = ">=0.2.2" },

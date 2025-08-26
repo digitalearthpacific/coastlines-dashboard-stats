@@ -2,13 +2,17 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 
+from config import CHANGE_THRESHOLD_KM_PER_YR
 
-def categorize_change_magnitude(roc, no_change_threshold: int = 2):
+
+def categorize_change_magnitude(
+    roc, no_change_threshold: int | float = CHANGE_THRESHOLD_KM_PER_YR
+):
     sig = _sig_change(roc)
     rules = [
-        (sig & (roc.rate_time > 5), "high_change"),
-        (sig & (roc.rate_time > 3), "medium_change"),
-        (sig & (roc.rate_time > no_change_threshold), "low_change"),
+        (sig & (abs(roc.rate_time) > 5), "high_change"),
+        (sig & (abs(roc.rate_time) > 3), "medium_change"),
+        (sig & (abs(roc.rate_time) > no_change_threshold), "low_change"),
     ]
     conditions, categories = zip(*rules)
     return pd.Series(
@@ -16,7 +20,9 @@ def categorize_change_magnitude(roc, no_change_threshold: int = 2):
     )
 
 
-def categorize_roc(roc, no_change_threshold: int = 2):
+def categorize_change_direction(
+    roc, no_change_threshold: int | float = CHANGE_THRESHOLD_KM_PER_YR
+):
     sig = _sig_change(roc)
     neg = roc["rate_time"] < -no_change_threshold
     pos = roc["rate_time"] > no_change_threshold
@@ -43,11 +49,28 @@ def _calculate_percent_of_each_value(series: pd.Series):
     return output.round(2)
 
 
-def change_magnitude_percentages(roc: gpd.GeoDataFrame):
-    return _calculate_percent_of_each_value(categorize_change_magnitude(roc))
+def _calculate_km_of_each_value(series: pd.Series):
+    roc_interval_m = 30
+    km_per_m = 1 / 1000
+    roc_interval_km = roc_interval_m * km_per_m
+
+    output = series.value_counts() * roc_interval_km
+    output.index = [f"{col}_km" for col in output.index]
+    return output.round(2)
 
 
-def change_type_percentages(roc: gpd.GeoDataFrame, no_change_threshold: int = 2):
+def get_change_magnitude_summary(roc: gpd.GeoDataFrame, summary_type="km"):
+    summariser = (
+        _calculate_percent_of_each_value
+        if summary_type == "percent"
+        else _calculate_km_of_each_value
+    )
+    return summariser(categorize_change_magnitude(roc))
+
+
+def get_change_type_summary(
+    roc: gpd.GeoDataFrame, no_change_threshold: int | float = CHANGE_THRESHOLD_KM_PER_YR
+):
     """Categories rates of change points into growth, retreat, and stable classes.
 
     Args:
@@ -62,4 +85,6 @@ def change_type_percentages(roc: gpd.GeoDataFrame, no_change_threshold: int = 2)
         The input dataframe with additional columns.
 
     """
-    return _calculate_percent_of_each_value(categorize_roc(roc, no_change_threshold))
+    return _calculate_percent_of_each_value(
+        categorize_change_direction(roc, no_change_threshold)
+    )
