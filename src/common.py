@@ -5,6 +5,24 @@ import pandas as pd
 from config import CHANGE_THRESHOLD_KM_PER_YR
 
 
+def make_outliers_nan(row: pd.Series):
+    """Recode outlier values to nan.
+
+    Args:
+        row: Usually a row of rates of change data for coastlines. Must have
+        row.dist_{year} properties and a row.outl_time property. The latter
+        is a list of zero or more comma separated years.
+
+    Returns: The input with row.dist_{year} set to nan where {year} is coded as an
+    outlier.
+
+    """
+    for outlier_year in row.outl_time.split(" "):
+        if outlier_year != "":
+            row[f"dist_{outlier_year}"] = float("nan")
+    return row
+
+
 def categorize_change_magnitude(
     roc, no_change_threshold: int | float = CHANGE_THRESHOLD_KM_PER_YR
 ):

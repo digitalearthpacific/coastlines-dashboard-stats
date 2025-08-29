@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from antimeridian import fix_polygon
+from antimeridian import fix_multi_polygon, fix_polygon
 from dep_tools.grids import grid
 from dep_tools.utils import search_across_180
 from exactextract import exact_extract
@@ -10,18 +10,22 @@ import numpy as np
 import odc.stac
 import pandas as pd
 import pystac_client
+from shapely import voronoi_polygons
+from shapely.geometry import MultiPoint
 from tqdm import tqdm
 import xarray as xr
 
-tqdm.pandas()  # turn something on
+tqdm.pandas()  # turn tqdm on for pandas ops
 
-from config import COASTLINES_FILE, EEZ, EQUAL_AREA_CRS, OUTPUT_DIR
-from regional_rates_of_change import add_rates_of_change_calculations
+from config import COASTLINES_FILE, EEZ, EQUAL_AREA_CRS, OUTPUT_DIR, BUILDINGS
+from regional_rates_of_change import calculate_rates_of_change_over_polygons
 
 
-def main(coastlines_file: Path = COASTLINES_FILE):
+def main(
+    coastlines_file: Path = COASTLINES_FILE, hotspots_layer: str = "hotspots_zoom_3"
+):
     hotspots = gpd.read_file(
-        coastlines_file, layer="hotspots_zoom_3", engine="pyogrio", use_arrow=True
+        coastlines_file, layer=hotspots_layer, engine="pyogrio", use_arrow=True
     )
     contiguous_hotspots = calculate_contiguous_hotspots(hotspots)
     # At issue is how to deal with hotspots which cross grid boundaries.
@@ -36,12 +40,12 @@ def main(coastlines_file: Path = COASTLINES_FILE):
     ratesofchange = gpd.read_file(
         coastlines_file, layer="rates_of_change", engine="pyogrio", use_arrow=True
     )
-    contiguous_hotspots = add_rates_of_change_calculations(
+    contiguous_hotspots = calculate_rates_of_change_over_polygons(
         contiguous_hotspots, ratesofchange
     )
     contiguous_hotspots = intersect_with_grid(contiguous_hotspots)
 
-    # Process by each column row, to conserve loading time
+    # Process by each column-row, to conserve loading time
     total_pop = contiguous_hotspots.groupby(
         ["column", "row"], group_keys=False
     ).progress_apply(total_population)
@@ -64,41 +68,98 @@ def main(coastlines_file: Path = COASTLINES_FILE):
 
     contiguous_hotspots = contiguous_hotspots.sjoin(EEZ[["geometry", "ISO_Ter1"]])
 
-    contiguous_hotspots.to_file(OUTPUT_DIR / "output/contiguous_hotspots.gpkg")
+    contiguous_hotspots.to_file(OUTPUT_DIR / "contiguous_hotspots.gpkg")
 
     build_tiles(contiguous_hotspots, OUTPUT_DIR / "contiguous_hotspots.pmtiles")
 
 
 def intersect_with_grid(non_point_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    grid_gdf = grid(
-        intersect_with=non_point_gdf.reset_index()[["geometry"]],
-        return_type="GeoDataFrame",
+    """Intersect a GeoDataFrame with the DEP grid, adding "column" & "row" attributes.
+
+    Args:
+        non_point_gdf: A non-point GeoDataFrame.
+
+    Returns:
+        The input with columns "column" & "row" added, indicating which tile
+        of the DEP grid the corresponding shape falls into. If a shape falls
+        into multiple tiles, it is split by tile boundary.
+
+    """
+    grid_gdf = gpd.GeoDataFrame(
+        grid(
+            intersect_with=gpd.GeoDataFrame(non_point_gdf.reset_index()[["geometry"]]),
+            return_type="GeoDataFrame",
+        )
     ).drop_duplicates()
 
-    return non_point_gdf.sjoin(
-        grid_gdf.reset_index().rename(columns=dict(level_0="column", level_1="row"))
-    ).drop("index_right", axis=1)
+    return gpd.GeoDataFrame(
+        non_point_gdf.sjoin(
+            gpd.GeoDataFrame(
+                grid_gdf.reset_index().rename(
+                    columns=dict(level_0="column", level_1="row")
+                )
+            )
+        ).drop("index_right", axis=1)
+    )
 
 
 def calculate_contiguous_hotspots(hotspots: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Create non-overlapping sets of like-directioned hotspots.
+
+    Only input points with good certainty and significant relationships are kept.
+
+    Args:
+        hotspots: A hotspots GeoDataFrame, as would be created by
+            dep_coastlines.continental. Should have point geometry and
+            sig_time & certainty columns.
+
+    Returns:
+        A GeoDataFrame where overlapping shapes are unioned, according to
+        whether they represent growth or retreat. (Note there is no filtering
+        by degree of growth or retreat.)
+    """
     # Only keep hotspots with significant change and good certainty
-    buffered_hotspots = hotspots[
+    good_hotspots = hotspots[
         (hotspots.sig_time < 0.01) & (hotspots.certainty == "good")
     ][["geometry", "rate_time"]].copy()
 
     radius = hotspots.radius_m.iloc[0]
     # Buffer each by the original hotspot radius
-    buffered_hotspots["geometry"] = buffered_hotspots.geometry.buffer(radius)
+    buffered_hotspots = good_hotspots.copy()
+    buffered_hotspots["geometry"] = buffered_hotspots.geometry.buffer(
+        radius,
+    )
+
+    # Prep to remove overlapping retreat & growth polygons by
+    # creating voronoi_polygons across all non-zero points and
+    # splitting them into retreat and growth geometries.
+    voronoi_nonzero_hotspots = good_hotspots[good_hotspots.rate_time != 0].copy()
+    voronoi_nonzero_hotspots["geometry"] = voronoi_polygons(
+        # fun fact: MultiPoint preserves order but .union_all() does not
+        # https://github.com/shapely/shapely/issues/703
+        MultiPoint(voronoi_nonzero_hotspots.geometry),
+        ordered=True,
+    ).geoms
+
+    closer_to_growth = voronoi_nonzero_hotspots[
+        voronoi_nonzero_hotspots.rate_time > 0
+    ].geometry.union_all()
+
+    closer_to_retreat = voronoi_nonzero_hotspots[
+        voronoi_nonzero_hotspots.rate_time < 0
+    ].geometry.union_all()
 
     # Select those which showed coastal retreat, union, and split into
-    # non-touching polygons
+    # non-touching polygons. Then clip by the appropriate voronoi polygon
+    # sets.
     retreated_hotspots = buffered_hotspots[buffered_hotspots.rate_time < 0]
     contiguous_retreated_hotspots = (
         gpd.GeoDataFrame(
             geometry=[retreated_hotspots.geometry.union_all()],
             crs=hotspots.crs,
-        ).explode(ignore_index=True)
-        #   .assign(direction="retreat")
+        )
+        .explode(ignore_index=True)
+        .clip(closer_to_retreat)
     )
 
     # Do the same for those which showed coastal growth
@@ -107,19 +168,35 @@ def calculate_contiguous_hotspots(hotspots: gpd.GeoDataFrame) -> gpd.GeoDataFram
         gpd.GeoDataFrame(
             geometry=[grown_hotspots.geometry.union_all()],
             crs=hotspots.crs,
-        ).explode(ignore_index=True)
-        #   .assign(direction="growth")
+        )
+        .explode(ignore_index=True)
+        .clip(closer_to_growth)
     )
 
     # combine and return
-    return pd.concat(
-        [contiguous_retreated_hotspots, contiguous_grown_hotspots], ignore_index=True
+    return gpd.GeoDataFrame(
+        pd.concat(
+            [contiguous_retreated_hotspots, contiguous_grown_hotspots],
+            ignore_index=True,
+        )
     )
 
 
-def count_buildings(gdf: gpd.GeoDataFrame) -> pd.Series:
-    return (
-        gdf.sjoin(buildings.to_crs(gdf.crs))
+def count_buildings(
+    gdf: gpd.GeoDataFrame, buildings: gpd.GeoDataFrame = BUILDINGS
+) -> pd.Series:
+    """Count the number of "buildings" in each shape of a GeoDataFrame.
+
+    Args:
+        gdf: A polygon GeoDataFrame.
+        buildings: A GeoDataFrame where rows represent buildings.
+
+    Returns:
+        A series indexed the same as `gdf`, with the value representing
+        the count of building features in the corresponding polygon.
+    """
+    return pd.Series(
+        gdf.sjoin(buildings.to_crs(str(gdf.crs)))
         .reset_index(names=["index"])
         .groupby("index")["index_right"]
         .count()
@@ -128,6 +205,18 @@ def count_buildings(gdf: gpd.GeoDataFrame) -> pd.Series:
 
 
 def mangroves_area(gdf: gpd.GeoDataFrame):
+    """Calculate the area of mangroves in each shape of a GeoDataFrame.
+
+    Areas are calculated using the DE Pacific Mangroves product for 2024. Areas
+    with codes 1 & 2 (open & closed mangroves) are considered mangroves. As such,
+    area estimates may be less than Global Mangrove Watch.
+
+    Args:
+        gdf: A polygon/multipolygon GeoDataFrame
+
+    Returns:
+
+    """
     client = pystac_client.Client.open("https://stac.digitalearthpacific.org")
     items = search_across_180(
         gdf, client, collections=["dep_s2_mangroves"], datetime="2024"
@@ -135,11 +224,14 @@ def mangroves_area(gdf: gpd.GeoDataFrame):
     if len(items) == 0:
         output = pd.DataFrame(np.zeros((len(gdf), 1)), columns=["sum"])
     else:
+        dep_s2_mangrove_codes = [1, 2]
         mangroves = (
             odc.stac.load(
                 items, crs=EQUAL_AREA_CRS, geopolygon=gdf.to_crs(EQUAL_AREA_CRS)
-            ).squeeze(drop=True)
-        ) > 0
+            )
+            .squeeze(drop=True)
+            .isin(dep_s2_mangrove_codes)
+        )
         ha_per_sqm = 1 / 10_000
         cell_area_sqm = abs(np.prod(mangroves.odc.geobox.resolution.xy)).item()
         cell_area_ha = cell_area_sqm * ha_per_sqm
@@ -181,8 +273,23 @@ def total_population(gdf: gpd.GeoDataFrame):
 
 
 def build_tiles(stats: gpd.GeoDataFrame, output_file: Path) -> None:
+    """Use tippecanoe to build pmtiles (and geojson) for the output stats.
+
+    Input geometry is fixed using :py:func:`antimeridian.fix_polygon` before
+    assembling tiles.
+
+    Args:
+        stats: Any GeoDataFrame
+        output_file: The path of the output file.
+    """
     stats = stats.copy().to_crs(4326)
-    stats["geometry"] = stats.geometry.apply(fix_polygon)
+    stats["geometry"] = stats.geometry.apply(
+        lambda geom: (
+            fix_polygon(geom)
+            if geom.geom_type == "Polygon"
+            else fix_multi_polygon(geom)
+        )
+    )
     output_geojson_path = output_file.parent / f"{output_file.stem}.geojson"
     output_pmtile_path = output_file.parent / f"{output_file.stem}.pmtiles"
     stats.to_file(output_geojson_path)

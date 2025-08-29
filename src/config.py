@@ -5,9 +5,10 @@ import urllib.request
 import geopandas as gpd
 from pyogrio import read_dataframe
 
+__version__ = "0.0.2"
+
 EQUAL_AREA_CRS = 8859
-VERSION = "0.0.1"
-OUTPUT_DIR = Path("data/output") / VERSION
+OUTPUT_DIR = Path("data/output") / __version__
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 CHANGE_THRESHOLD_KM_PER_YR = 2

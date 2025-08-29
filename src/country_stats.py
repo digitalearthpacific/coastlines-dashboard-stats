@@ -11,18 +11,38 @@ from common import (
     categorize_change_magnitude,
     get_change_magnitude_summary,
     get_change_type_summary,
+    make_outliers_nan,
 )
-from config import COASTLINES_FILE, EEZ, OUTPUT_DIR, VERSION
+from config import COASTLINES_FILE, EEZ, OUTPUT_DIR, __version__
 
 
-def summarise_roc(roc: pd.api.typing.DataFrameGroupBy) -> gpd.GeoDataFrame:
+def summarise_roc(roc: pd.api.typing.DataFrameGroupBy) -> pd.DataFrame:
+    """Create summaries for each group of rates of change points.
+
+    Args:
+        roc: A grouped rates of change dataframe.
+
+    Returns: A dataframe with the following columns:
+        - dist_{year} : Median distances for all rates of change points and years
+            where certainty is good. Outlier years are removed from each point.
+        - percent_{growth|retreat|stable|growth_non_sig|retreat_non_sig} : The percent
+            of points in the corresponding category. Significance is determined
+            by the sig_time column.
+        - {high|medium|low|non_sig}_km : The kilometers of coastline in each
+            category.
+    """
+
     def get_distance_stats(d: pd.DataFrame):
+        """Calculate median distances for each dist_{year} column in d, across all
+        rows that have certainty "good".
+        """
         return (
-            d.loc[
+            d.apply(make_outliers_nan, axis="columns")
+            .loc[
                 d.certainty == "good",
-                d.columns.str.contains("dist_|ISO"),
+                d.columns.str.contains("dist_"),
             ]
-            .median()
+            .count()
             .round(2)
         )
 
@@ -40,15 +60,13 @@ def summarise_roc(roc: pd.api.typing.DataFrameGroupBy) -> gpd.GeoDataFrame:
     )
 
 
-# I don't think this will be needed because as of right now we just
-# need
 def country_level_stats(
     coastlines_file: Path = COASTLINES_FILE, eez: gpd.GeoDataFrame = EEZ
 ):
     # Sum population, buildings, and mangrove area in all contiguous hotspots
     # in the entire country
     hotspot_stats = (
-        gpd.read_file("data/output/contiguous_hotspots.gpkg")
+        gpd.read_file(OUTPUT_DIR / "contiguous_hotspots.gpkg")
         .groupby("ISO_Ter1")[
             ["total_population", "building_counts", "mangrove_area_ha"]
         ]
@@ -71,16 +89,13 @@ def country_level_stats(
 
     eez["bbox"] = eez.geometry.to_crs(4326).apply(fix_and_bbox)
 
-    output = (
-        hotspot_stats.join(roc_stats)
-        .join(eez[["bbox"]])
-        .reset_index()
-        .rename(dict(ISO_Ter1="id"), axis=1)
-    )
+    output = hotspot_stats.join(roc_stats).join(eez[["bbox"]]).reset_index(names="id")
     output.to_csv(OUTPUT_DIR / "country_summaries.csv", index=False)
     _write_geojson(output, OUTPUT_DIR / "country_summaries.geojson")
 
 
+# I don't think this will be needed because as of right now we just
+# need country-level stats
 def contiguous_hotspots_groups_stats():
     contiguous_hotspots = gpd.read_file("data/output/contiguous_hotspots.gpkg")
 
@@ -103,6 +118,12 @@ def contiguous_hotspots_groups_stats():
 
 
 def _write_geojson(df: pd.DataFrame, output_path: Path) -> None:
+    """Write country-level geojson according to Matthew's specs.
+
+    Args:
+        df: Country-level stats
+        output_path: Where to write the output. Output is also copied to S3.
+    """
     features = []
     for _, row in df.iterrows():
         feature = {
@@ -139,13 +160,9 @@ def _write_geojson(df: pd.DataFrame, output_path: Path) -> None:
         json.dump(geojson_obj, f, indent=2)
 
     s3 = S3FileSystem()
-    s3_path = f"dep-public-staging/dep_ls_coastlines/dashboard_stats/{VERSION.replace('.', '-')}"
+    s3_path = f"dep-public-staging/dep_ls_coastlines/dashboard_stats/{__version__.replace('.', '-')}"
     s3.put(output_path, s3_path)
 
 
-def main():
-    country_level_stats()
-
-
 if __name__ == "__main__":
-    main()
+    country_level_stats()

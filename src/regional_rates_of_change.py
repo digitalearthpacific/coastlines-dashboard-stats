@@ -1,19 +1,16 @@
 import geohash as gh
-import geopandas as gpd
 
 from coastlines.vector import change_regress
 
-from common import categorize_roc
-
-
-def add_rates_of_change_calculations(polygons, ratesofchange) -> gpd.GeoDataFrame:
-    output = calculate_rates_of_change_over_polygons(polygons, ratesofchange)
-    ratesofchange["roc_category"] = categorize_roc(ratesofchange)
-    breakpoint()
-    return output
-
 
 def calculate_rates_of_change_over_polygons(polygons, ratesofchange):
+    # NOTE: Regarding outliers, there are two approaches if we wanted to remove
+    # them. First, we could remove outliers in the input rates of change tables
+    # before calculating stats (and establishing new outliers), or we could
+    # take the median of all, calculate stats, and remove outliers there.
+    # Or we could do both. Currently we're doing neither, because I'm not
+    # sure what the "dist_" stats are being used for (if anything).
+
     # Taken from hotspot calculations in continental.py. It's possible
     # they're close enough we could have a single function, but there
     # are a few differences.
