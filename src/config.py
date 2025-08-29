@@ -10,6 +10,7 @@ __version__ = "0.0.2"
 EQUAL_AREA_CRS = 8859
 OUTPUT_DIR = Path("data/output") / __version__
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+S3_PATH = f"dep-public-staging/dep_ls_coastlines/dashboard_stats/{__version__.replace('.', '-')}"
 
 CHANGE_THRESHOLD_KM_PER_YR = 2
 

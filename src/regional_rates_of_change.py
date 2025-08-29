@@ -1,11 +1,29 @@
 import geohash as gh
+import geopandas as gpd
 
 from coastlines.vector import change_regress
 
 
-def calculate_rates_of_change_over_polygons(polygons, ratesofchange):
-    # NOTE: Regarding outliers, there are two approaches if we wanted to remove
-    # them. First, we could remove outliers in the input rates of change tables
+def calculate_rates_of_change_over_polygons(
+    polygons: gpd.GeoDataFrame, ratesofchange: gpd.GeoDataFrame
+) -> gpd.GeoDataFrame:
+    """Calculate combined rates of change values for each of the given polygons.
+
+    Take the median distance values for any rates of change points within each
+    polygon with "good" certainty values. Use
+    :py:func:`coastlines.vector.change_regress` to calculate regression statistics
+    across the median values (similar to how hotspot values are calculated).
+
+    Args:
+        polygons: A GeoDataFrame with polygons.
+        ratesofchange: A rates of change GeoDataFrame
+
+    Returns:
+        The input polygons with additional columns rate_time, incpt_time, sig_time,
+        se_time, outl_time, and uid,
+    """
+    # NOTE: There are two approaches if we wanted to remove outliers.
+    # First, we could remove outliers in the input rates of change tables
     # before calculating stats (and establishing new outliers), or we could
     # take the median of all, calculate stats, and remove outliers there.
     # Or we could do both. Currently we're doing neither, because I'm not
@@ -47,7 +65,7 @@ def calculate_rates_of_change_over_polygons(polygons, ratesofchange):
 
     # Join aggregated values back to hotspot points after
     # dropping unused columns (regression intercept)
-    polygons = polygons.join(hotspot_values.drop("incpt_time", axis=1))
+    polygons = gpd.GeoDataFrame(polygons.join(hotspot_values.drop("incpt_time", axis=1)))
 
     # Generate a geohash UID for each point and set as index
     uids = (
@@ -56,4 +74,4 @@ def calculate_rates_of_change_over_polygons(polygons, ratesofchange):
         .apply(lambda x: gh.encode(x.y, x.x, precision=11))
         .rename("uid")
     )
-    return polygons.set_index(uids)
+    return gpd.GeoDataFrame(polygons.set_index(uids))

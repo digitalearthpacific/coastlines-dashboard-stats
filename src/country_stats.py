@@ -1,3 +1,4 @@
+"""Calculate country-level statistics."""
 import json
 from pathlib import Path
 
@@ -7,62 +8,25 @@ import pandas as pd
 from s3fs import S3FileSystem
 
 from common import (
-    categorize_change_direction,
-    categorize_change_magnitude,
     get_change_magnitude_summary,
     get_change_type_summary,
     make_outliers_nan,
 )
-from config import COASTLINES_FILE, EEZ, OUTPUT_DIR, __version__
-
-
-def summarise_roc(roc: pd.api.typing.DataFrameGroupBy) -> pd.DataFrame:
-    """Create summaries for each group of rates of change points.
-
-    Args:
-        roc: A grouped rates of change dataframe.
-
-    Returns: A dataframe with the following columns:
-        - dist_{year} : Median distances for all rates of change points and years
-            where certainty is good. Outlier years are removed from each point.
-        - percent_{growth|retreat|stable|growth_non_sig|retreat_non_sig} : The percent
-            of points in the corresponding category. Significance is determined
-            by the sig_time column.
-        - {high|medium|low|non_sig}_km : The kilometers of coastline in each
-            category.
-    """
-
-    def get_distance_stats(d: pd.DataFrame):
-        """Calculate median distances for each dist_{year} column in d, across all
-        rows that have certainty "good".
-        """
-        return (
-            d.apply(make_outliers_nan, axis="columns")
-            .loc[
-                d.certainty == "good",
-                d.columns.str.contains("dist_"),
-            ]
-            .count()
-            .round(2)
-        )
-
-    distance_stats = roc.apply(get_distance_stats)
-
-    change_type_percentages = roc.apply(
-        get_change_type_summary, include_groups=False
-    ).unstack(fill_value=0)
-    change_magnitude_percentages = roc.apply(
-        get_change_magnitude_summary, include_groups=False
-    ).unstack(fill_value=0)
-
-    return distance_stats.join(change_type_percentages).join(
-        change_magnitude_percentages
-    )
-
+from config import COASTLINES_FILE, EEZ, OUTPUT_DIR, __version__, S3_PATH
 
 def country_level_stats(
     coastlines_file: Path = COASTLINES_FILE, eez: gpd.GeoDataFrame = EEZ
 ):
+    """Derive country level statistics.
+
+    Population, buildings, and mangrove area are calculated by summing across
+    values within all contiguous hotspots within the country. Country-level
+    distances are calculated across all
+    
+    Args:
+        coastlines_file: The path to the coastlines data
+        eez: Economic exclusion zones, used to define country boundaries.
+    """
     # Sum population, buildings, and mangrove area in all contiguous hotspots
     # in the entire country
     hotspot_stats = (
@@ -94,27 +58,6 @@ def country_level_stats(
     _write_geojson(output, OUTPUT_DIR / "country_summaries.geojson")
 
 
-# I don't think this will be needed because as of right now we just
-# need country-level stats
-def contiguous_hotspots_groups_stats():
-    contiguous_hotspots = gpd.read_file("data/output/contiguous_hotspots.gpkg")
-
-    # TODO: I _think_ this stands (since hotspots were made from good points)
-    contiguous_hotspots["certainty"] = "good"
-    # Create categorization for combined hotspot values
-    contiguous_hotspots["change_magnitude"] = categorize_change_magnitude(
-        contiguous_hotspots
-    )
-    contiguous_hotspots["change_direction"] = categorize_change_direction(
-        contiguous_hotspots
-    )
-
-    output = summarise_roc(
-        contiguous_hotspots.groupby(
-            ["ISO_Ter1", "change_magnitude", "change_direction"]
-        )
-    )
-    output.reset_index().to_csv(OUTPUT_DIR / "country_hotspot_group_summaries.csv")
 
 
 def _write_geojson(df: pd.DataFrame, output_path: Path) -> None:
@@ -160,9 +103,50 @@ def _write_geojson(df: pd.DataFrame, output_path: Path) -> None:
         json.dump(geojson_obj, f, indent=2)
 
     s3 = S3FileSystem()
-    s3_path = f"dep-public-staging/dep_ls_coastlines/dashboard_stats/{__version__.replace('.', '-')}"
-    s3.put(output_path, s3_path)
+    s3.put(output_path, S3_PATH)
 
+def summarise_roc(roc: pd.api.typing.DataFrameGroupBy) -> pd.DataFrame:
+    """Create summaries for each group of rates of change points.
+
+    Args:
+        roc: A grouped rates of change dataframe.
+
+    Returns: A dataframe with the following columns:
+        - dist_{year} : Median distances for all rates of change points and years
+            where certainty is good. Outlier years are removed from each point.
+        - percent_{growth|retreat|stable|growth_non_sig|retreat_non_sig} : The percent
+            of points in the corresponding category. Significance is determined
+            by the sig_time column.
+        - {high|medium|low|non_sig}_km : The kilometers of coastline in each
+            category.
+    """
+
+    def get_distance_stats(d: pd.DataFrame):
+        """Calculate median distances for each dist_{year} column in d, across all
+        rows that have certainty "good".
+        """
+        return (
+            d.apply(make_outliers_nan, axis="columns")
+            .loc[
+                d.certainty == "good",
+                d.columns.str.contains("dist_"),
+            ]
+            .count()
+            .round(2)
+        )
+
+    distance_stats = roc.apply(get_distance_stats)
+
+    change_type_percentages = roc.apply(
+        get_change_type_summary, include_groups=False
+    ).unstack(fill_value=0)
+    change_magnitude_percentages = roc.apply(
+        get_change_magnitude_summary, include_groups=False
+    ).unstack(fill_value=0)
+
+    return distance_stats.join(change_type_percentages).join(
+        change_magnitude_percentages
+    )
 
 if __name__ == "__main__":
     country_level_stats()

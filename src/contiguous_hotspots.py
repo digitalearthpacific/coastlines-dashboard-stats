@@ -1,3 +1,4 @@
+"""Derive contiguous hotspots and calculate statistics for each one."""
 import os
 from pathlib import Path
 
@@ -10,6 +11,7 @@ import numpy as np
 import odc.stac
 import pandas as pd
 import pystac_client
+from s3fs import S3FileSystem
 from shapely import voronoi_polygons
 from shapely.geometry import MultiPoint
 from tqdm import tqdm
@@ -17,7 +19,7 @@ import xarray as xr
 
 tqdm.pandas()  # turn tqdm on for pandas ops
 
-from config import COASTLINES_FILE, EEZ, EQUAL_AREA_CRS, OUTPUT_DIR, BUILDINGS
+from config import COASTLINES_FILE, EEZ, EQUAL_AREA_CRS, OUTPUT_DIR, BUILDINGS, S3_PATH
 from regional_rates_of_change import calculate_rates_of_change_over_polygons
 
 
@@ -68,9 +70,16 @@ def main(
 
     contiguous_hotspots = contiguous_hotspots.sjoin(EEZ[["geometry", "ISO_Ter1"]])
 
-    contiguous_hotspots.to_file(OUTPUT_DIR / "contiguous_hotspots.gpkg")
+    contiguous_hotspots_geopackage = OUTPUT_DIR / "contiguous_hotspots.gpkg"
+    contiguous_hotspots.to_file(contiguous_hotspots_geopackage)
 
-    build_tiles(contiguous_hotspots, OUTPUT_DIR / "contiguous_hotspots.pmtiles")
+    contiguous_hotspots_pmtiles = OUTPUT_DIR / "contiguous_hotspots.pmtiles"
+    build_tiles(contiguous_hotspots, contiguous_hotspots_pmtiles)
+
+    s3 = S3FileSystem()
+    s3.put(contiguous_hotspots_geopackage, S3_PATH)
+    s3.put(contiguous_hotspots_pmtiles, S3_PATH)
+
 
 
 def intersect_with_grid(non_point_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:

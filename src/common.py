@@ -26,6 +26,16 @@ def make_outliers_nan(row: pd.Series):
 def categorize_change_magnitude(
     roc, no_change_threshold: int | float = CHANGE_THRESHOLD_KM_PER_YR
 ):
+    """
+
+    Args:
+        roc: rates of change
+        no_change_threshold: The threshold under which no change is assumed to 
+            have occurred.
+
+    Returns:
+        
+    """
     sig = _sig_change(roc)
     rules = [
         (sig & (abs(roc.rate_time) > 5), "high_change"),
