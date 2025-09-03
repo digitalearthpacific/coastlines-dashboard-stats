@@ -1,5 +1,7 @@
 """Calculate country-level statistics."""
+
 import json
+import math
 from pathlib import Path
 
 from antimeridian import bbox, fix_multi_polygon, fix_polygon
@@ -14,6 +16,7 @@ from common import (
 )
 from config import COASTLINES_FILE, EEZ, OUTPUT_DIR, __version__, S3_PATH
 
+
 def country_level_stats(
     coastlines_file: Path = COASTLINES_FILE, eez: gpd.GeoDataFrame = EEZ
 ):
@@ -22,7 +25,7 @@ def country_level_stats(
     Population, buildings, and mangrove area are calculated by summing across
     values within all contiguous hotspots within the country. Country-level
     distances are calculated across all
-    
+
     Args:
         coastlines_file: The path to the coastlines data
         eez: Economic exclusion zones, used to define country boundaries.
@@ -58,8 +61,6 @@ def country_level_stats(
     _write_geojson(output, OUTPUT_DIR / "country_summaries.geojson")
 
 
-
-
 def _write_geojson(df: pd.DataFrame, output_path: Path) -> None:
     """Write country-level geojson according to Matthew's specs.
 
@@ -67,6 +68,10 @@ def _write_geojson(df: pd.DataFrame, output_path: Path) -> None:
         df: Country-level stats
         output_path: Where to write the output. Output is also copied to S3.
     """
+
+    def _convert_nan_to_null(value):
+        return None if math.isnan(value) else value
+
     features = []
     for _, row in df.iterrows():
         feature = {
@@ -91,7 +96,8 @@ def _write_geojson(df: pd.DataFrame, output_path: Path) -> None:
                 "number_of_buildings_in_hotspots": row["building_counts"],
                 "mangrove_area_ha_in_hotspots": row["mangrove_area_ha"],
                 "median_distances": {
-                    str(year): row[f"dist_{year}"] for year in range(1999, 2024)
+                    str(year): _convert_nan_to_null(row[f"dist_{year}"])
+                    for year in range(1999, 2024)
                 },
             },
         }
@@ -104,6 +110,7 @@ def _write_geojson(df: pd.DataFrame, output_path: Path) -> None:
 
     s3 = S3FileSystem()
     s3.put(output_path, S3_PATH)
+
 
 def summarise_roc(roc: pd.api.typing.DataFrameGroupBy) -> pd.DataFrame:
     """Create summaries for each group of rates of change points.
@@ -121,19 +128,18 @@ def summarise_roc(roc: pd.api.typing.DataFrameGroupBy) -> pd.DataFrame:
             category.
     """
 
-    def get_distance_stats(d: pd.DataFrame):
+    def get_distance_stats(d: pd.DataFrame, fewest_values: int = 250) -> pd.Series:
         """Calculate median distances for each dist_{year} column in d, across all
         rows that have certainty "good".
         """
-        return (
-            d.apply(make_outliers_nan, axis="columns")
-            .loc[
-                d.certainty == "good",
-                d.columns.str.contains("dist_"),
-            ]
-            .count()
-            .round(2)
-        )
+        filtered_d = d.apply(make_outliers_nan, axis="columns").loc[
+            d.certainty == "good",
+            d.columns.str.contains("dist_"),
+        ]
+        counts = filtered_d.count()
+        median = filtered_d.median().round(2)
+        median[counts < fewest_values] = float("nan")
+        return median
 
     distance_stats = roc.apply(get_distance_stats)
 
@@ -147,6 +153,7 @@ def summarise_roc(roc: pd.api.typing.DataFrameGroupBy) -> pd.DataFrame:
     return distance_stats.join(change_type_percentages).join(
         change_magnitude_percentages
     )
+
 
 if __name__ == "__main__":
     country_level_stats()
