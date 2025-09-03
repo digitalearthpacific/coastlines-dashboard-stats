@@ -1,4 +1,5 @@
 """Derive contiguous hotspots and calculate statistics for each one."""
+
 import os
 from pathlib import Path
 
@@ -19,7 +20,7 @@ import xarray as xr
 
 tqdm.pandas()  # turn tqdm on for pandas ops
 
-from config import COASTLINES_FILE, EEZ, EQUAL_AREA_CRS, OUTPUT_DIR, BUILDINGS, S3_PATH
+from config import COASTLINES_FILE, EQUAL_AREA_CRS, OUTPUT_DIR, BUILDINGS, S3_PATH
 from regional_rates_of_change import calculate_rates_of_change_over_polygons
 
 
@@ -42,11 +43,22 @@ def main(
     ratesofchange = gpd.read_file(
         coastlines_file, layer="rates_of_change", engine="pyogrio", use_arrow=True
     )
+
     contiguous_hotspots = calculate_rates_of_change_over_polygons(
         contiguous_hotspots, ratesofchange
     )
+
+    # Drop distance columns to save space
+    cols_to_drop = [
+        col for col in contiguous_hotspots.columns if col.startswith("dist_")
+    ]
+    contiguous_hotspots = gpd.GeoDataFrame(
+        contiguous_hotspots.drop(columns=cols_to_drop)
+    )
+
     contiguous_hotspots = intersect_with_grid(contiguous_hotspots)
 
+    # Get total population for each contiguous hotspot
     # Process by each column-row, to conserve loading time
     total_pop = contiguous_hotspots.groupby(
         ["column", "row"], group_keys=False
@@ -58,6 +70,7 @@ def main(
         .reindex(contiguous_hotspots.index, fill_value=0)
     )
 
+    # Get total mangrove area for each contiguous hotspot
     contiguous_hotspots["building_counts"] = count_buildings(contiguous_hotspots)
     mangrove_area_ha = contiguous_hotspots.groupby(
         ["column", "row"], group_keys=False
@@ -68,7 +81,9 @@ def main(
         .reindex(contiguous_hotspots.index, fill_value=0)
     )
 
-    contiguous_hotspots = contiguous_hotspots.sjoin(EEZ[["geometry", "ISO_Ter1"]])
+    contiguous_hotspots = contiguous_hotspots.sjoin(
+        gpd.GeoDataFrame([["geometry", "ISO_Ter1"]])
+    )
 
     contiguous_hotspots_geopackage = OUTPUT_DIR / "contiguous_hotspots.gpkg"
     contiguous_hotspots.to_file(contiguous_hotspots_geopackage)
@@ -79,7 +94,6 @@ def main(
     s3 = S3FileSystem()
     s3.put(contiguous_hotspots_geopackage, S3_PATH)
     s3.put(contiguous_hotspots_pmtiles, S3_PATH)
-
 
 
 def intersect_with_grid(non_point_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
