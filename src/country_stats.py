@@ -1,7 +1,6 @@
 """Calculate country-level statistics."""
 
 import json
-import math
 from pathlib import Path
 
 from antimeridian import bbox, fix_multi_polygon, fix_polygon
@@ -12,7 +11,6 @@ from s3fs import S3FileSystem
 from common import (
     get_change_magnitude_summary,
     get_change_type_summary,
-    make_outliers_nan,
 )
 from config import COASTLINES_FILE, EEZ, OUTPUT_DIR, __version__, S3_PATH
 
@@ -41,13 +39,13 @@ def country_level_stats(
         .round(2)
     )
 
-    # Calculate median distances for all ratesofchange points in the country
+    # Summarise km of different roc categories
     ratesofchange = gpd.read_file(
         coastlines_file, layer="rates_of_change", engine="pyogrio", use_arrow=True
     ).rename(dict(eez_territory="ISO_Ter1"), axis=1)
     roc_stats = summarise_roc(ratesofchange.groupby("ISO_Ter1"))
 
-    # Estimate bounding box based on
+    # Estimate bounding box based on economic exclusion zones
     eez = eez.dissolve(by="ISO_Ter1")
 
     def fix_and_bbox(geometry):
@@ -62,15 +60,14 @@ def country_level_stats(
 
 
 def _write_geojson(df: pd.DataFrame, output_path: Path) -> None:
-    """Write country-level geojson according to Matthew's specs.
+    """Write country-level summaries to geojson.
+
+    Format is as requested by front end developers.
 
     Args:
         df: Country-level stats
         output_path: Where to write the output. Output is also copied to S3.
     """
-
-    def _convert_nan_to_null(value):
-        return None if math.isnan(value) else value
 
     features = []
     for _, row in df.iterrows():
@@ -95,10 +92,6 @@ def _write_geojson(df: pd.DataFrame, output_path: Path) -> None:
                 "population_in_hotspots": row["total_population"],
                 "number_of_buildings_in_hotspots": row["building_counts"],
                 "mangrove_area_ha_in_hotspots": row["mangrove_area_ha"],
-                "median_distances": {
-                    str(year): _convert_nan_to_null(row[f"dist_{year}"])
-                    for year in range(1999, 2024)
-                },
             },
         }
         features.append(feature)
@@ -119,29 +112,12 @@ def summarise_roc(roc: pd.api.typing.DataFrameGroupBy) -> pd.DataFrame:
         roc: A grouped rates of change dataframe.
 
     Returns: A dataframe with the following columns:
-        - dist_{year} : Median distances for all rates of change points and years
-            where certainty is good. Outlier years are removed from each point.
         - percent_{growth|retreat|stable|growth_non_sig|retreat_non_sig} : The percent
             of points in the corresponding category. Significance is determined
             by the sig_time column.
         - {high|medium|low|non_sig}_km : The kilometers of coastline in each
             category.
     """
-
-    def get_distance_stats(d: pd.DataFrame, fewest_values: int = 250) -> pd.Series:
-        """Calculate median distances for each dist_{year} column in d, across all
-        rows that have certainty "good".
-        """
-        filtered_d = d.apply(make_outliers_nan, axis="columns").loc[
-            d.certainty == "good",
-            d.columns.str.contains("dist_"),
-        ]
-        counts = filtered_d.count()
-        median = filtered_d.median().round(2)
-        median[counts < fewest_values] = float("nan")
-        return median
-
-    distance_stats = roc.apply(get_distance_stats)
 
     change_type_percentages = roc.apply(
         get_change_type_summary, include_groups=False
@@ -150,9 +126,7 @@ def summarise_roc(roc: pd.api.typing.DataFrameGroupBy) -> pd.DataFrame:
         get_change_magnitude_summary, include_groups=False
     ).unstack(fill_value=0)
 
-    return distance_stats.join(change_type_percentages).join(
-        change_magnitude_percentages
-    )
+    return change_type_percentages.join(change_magnitude_percentages)
 
 
 if __name__ == "__main__":
