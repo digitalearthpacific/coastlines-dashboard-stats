@@ -78,11 +78,11 @@ def _write_geojson(df: pd.DataFrame, output_path: Path) -> None:
             "properties": {
                 "id": row["id"],
                 "shoreline_change_direction": {
-                    "percent_retreat": row["percent_retreat"],
-                    "percent_retreat_non_sig": row["percent_retreat_non_sig"],
-                    "percent_growth": row["percent_growth"],
-                    "percent_growth_non_sig": row["percent_growth_non_sig"],
-                    "percent_stable": row["percent_stable"],
+                    "retreat_km": row["retreat_km"],
+                    "retreat_non_sig_km": row["retreat_non_sig_km"],
+                    "growth_km": row["growth_km"],
+                    "growth_non_sig_km": row["growth_non_sig_km"],
+                    "stable_km": row["stable_km"],
                 },
                 "shoreline_change_magnitude": {
                     "high_change_km": row["high_change_km"],
@@ -119,14 +119,14 @@ def summarise_roc(roc: pd.api.typing.DataFrameGroupBy) -> pd.DataFrame:
             category.
     """
 
-    change_type_percentages = roc.apply(
-        get_change_type_summary, include_groups=False
+    change_type_summary = roc.apply(
+        get_change_type_summary, include_groups=False, summary_type="km"
     ).unstack(fill_value=0)
-    change_magnitude_percentages = roc.apply(
-        get_change_magnitude_summary, include_groups=False
+    change_magnitude_summary = roc.apply(
+        get_change_magnitude_summary, include_groups=False, summary_type="km"
     ).unstack(fill_value=0)
 
-    return change_type_percentages.join(change_magnitude_percentages)
+    return change_type_summary.join(change_magnitude_summary)
 
 
 if __name__ == "__main__":

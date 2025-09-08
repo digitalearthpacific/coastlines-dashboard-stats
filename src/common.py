@@ -30,11 +30,11 @@ def categorize_change_magnitude(
 
     Args:
         roc: rates of change
-        no_change_threshold: The threshold under which no change is assumed to 
+        no_change_threshold: The threshold under which no change is assumed to
             have occurred.
 
     Returns:
-        
+
     """
     sig = _sig_change(roc)
     rules = [
@@ -87,17 +87,23 @@ def _calculate_km_of_each_value(series: pd.Series):
     return output.round(2)
 
 
-def get_change_magnitude_summary(roc: gpd.GeoDataFrame, summary_type="km"):
+def get_change_magnitude_summary(
+    roc: gpd.GeoDataFrame,
+    no_change_threshold: int | float = CHANGE_THRESHOLD_KM_PER_YR,
+    summary_type="km",
+):
     summariser = (
         _calculate_percent_of_each_value
         if summary_type == "percent"
         else _calculate_km_of_each_value
     )
-    return summariser(categorize_change_magnitude(roc))
+    return summariser(categorize_change_magnitude(roc, no_change_threshold))
 
 
 def get_change_type_summary(
-    roc: gpd.GeoDataFrame, no_change_threshold: int | float = CHANGE_THRESHOLD_KM_PER_YR
+    roc: gpd.GeoDataFrame,
+    no_change_threshold: int | float = CHANGE_THRESHOLD_KM_PER_YR,
+    summary_type="km",
 ):
     """Categories rates of change points into growth, retreat, and stable classes.
 
@@ -113,6 +119,9 @@ def get_change_type_summary(
         The input dataframe with additional columns.
 
     """
-    return _calculate_percent_of_each_value(
-        categorize_change_direction(roc, no_change_threshold)
+    summariser = (
+        _calculate_percent_of_each_value
+        if summary_type == "percent"
+        else _calculate_km_of_each_value
     )
+    return summariser(categorize_change_direction(roc, no_change_threshold))

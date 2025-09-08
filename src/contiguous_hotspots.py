@@ -20,7 +20,7 @@ import xarray as xr
 
 tqdm.pandas()  # turn tqdm on for pandas ops
 
-from config import COASTLINES_FILE, EQUAL_AREA_CRS, OUTPUT_DIR, BUILDINGS, S3_PATH
+from config import COASTLINES_FILE, EQUAL_AREA_CRS, OUTPUT_DIR, BUILDINGS, S3_PATH, EEZ
 from regional_rates_of_change import calculate_rates_of_change_over_polygons
 
 
@@ -81,9 +81,7 @@ def main(
         .reindex(contiguous_hotspots.index, fill_value=0)
     )
 
-    contiguous_hotspots = contiguous_hotspots.sjoin(
-        gpd.GeoDataFrame([["geometry", "ISO_Ter1"]])
-    )
+    contiguous_hotspots = contiguous_hotspots.sjoin(EEZ[["geometry", "ISO_Ter1"]])
 
     contiguous_hotspots_geopackage = OUTPUT_DIR / "contiguous_hotspots.gpkg"
     contiguous_hotspots.to_file(contiguous_hotspots_geopackage)
