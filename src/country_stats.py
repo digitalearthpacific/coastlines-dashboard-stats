@@ -54,7 +54,13 @@ def country_level_stats(
 
     eez["bbox"] = eez.geometry.to_crs(4326).apply(fix_and_bbox)
 
-    output = hotspot_stats.join(roc_stats).join(eez[["bbox"]]).reset_index(names="id")
+    output = (
+        hotspot_stats.join(roc_stats)
+        # Do right join here to add countries without hotspots (WLF)
+        .join(eez[["bbox"]], how="right")
+        # NaN are from right join above
+        .fillna(0).reset_index(names="id")
+    )
     output.to_csv(OUTPUT_DIR / "country_summaries.csv", index=False)
     _write_geojson(output, OUTPUT_DIR / "country_summaries.geojson")
 
