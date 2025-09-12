@@ -1,4 +1,5 @@
 """Calculate country-level statistics."""
+
 import json
 from pathlib import Path
 
@@ -10,9 +11,9 @@ from s3fs import S3FileSystem
 from common import (
     get_change_magnitude_summary,
     get_change_type_summary,
-    make_outliers_nan,
 )
 from config import COASTLINES_FILE, EEZ, OUTPUT_DIR, __version__, S3_PATH
+
 
 def country_level_stats(
     coastlines_file: Path = COASTLINES_FILE, eez: gpd.GeoDataFrame = EEZ
@@ -22,7 +23,7 @@ def country_level_stats(
     Population, buildings, and mangrove area are calculated by summing across
     values within all contiguous hotspots within the country. Country-level
     distances are calculated across all
-    
+
     Args:
         coastlines_file: The path to the coastlines data
         eez: Economic exclusion zones, used to define country boundaries.
@@ -38,13 +39,13 @@ def country_level_stats(
         .round(2)
     )
 
-    # Calculate median distances for all ratesofchange points in the country
+    # Summarise km of different roc categories
     ratesofchange = gpd.read_file(
         coastlines_file, layer="rates_of_change", engine="pyogrio", use_arrow=True
     ).rename(dict(eez_territory="ISO_Ter1"), axis=1)
     roc_stats = summarise_roc(ratesofchange.groupby("ISO_Ter1"))
 
-    # Estimate bounding box based on
+    # Estimate bounding box based on economic exclusion zones
     eez = eez.dissolve(by="ISO_Ter1")
 
     def fix_and_bbox(geometry):
@@ -53,20 +54,27 @@ def country_level_stats(
 
     eez["bbox"] = eez.geometry.to_crs(4326).apply(fix_and_bbox)
 
-    output = hotspot_stats.join(roc_stats).join(eez[["bbox"]]).reset_index(names="id")
+    output = (
+        hotspot_stats.join(roc_stats)
+        # Do right join here to add countries without hotspots (WLF)
+        .join(eez[["bbox"]], how="right")
+        # NaN are from right join above
+        .fillna(0).reset_index(names="id")
+    )
     output.to_csv(OUTPUT_DIR / "country_summaries.csv", index=False)
     _write_geojson(output, OUTPUT_DIR / "country_summaries.geojson")
 
 
-
-
 def _write_geojson(df: pd.DataFrame, output_path: Path) -> None:
-    """Write country-level geojson according to Matthew's specs.
+    """Write country-level summaries to geojson.
+
+    Format is as requested by front end developers.
 
     Args:
         df: Country-level stats
         output_path: Where to write the output. Output is also copied to S3.
     """
+
     features = []
     for _, row in df.iterrows():
         feature = {
@@ -76,11 +84,11 @@ def _write_geojson(df: pd.DataFrame, output_path: Path) -> None:
             "properties": {
                 "id": row["id"],
                 "shoreline_change_direction": {
-                    "percent_retreat": row["percent_retreat"],
-                    "percent_retreat_non_sig": row["percent_retreat_non_sig"],
-                    "percent_growth": row["percent_growth"],
-                    "percent_growth_non_sig": row["percent_growth_non_sig"],
-                    "percent_stable": row["percent_stable"],
+                    "retreat_km": row["retreat_km"],
+                    "retreat_non_sig_km": row["retreat_non_sig_km"],
+                    "growth_km": row["growth_km"],
+                    "growth_non_sig_km": row["growth_non_sig_km"],
+                    "stable_km": row["stable_km"],
                 },
                 "shoreline_change_magnitude": {
                     "high_change_km": row["high_change_km"],
@@ -90,9 +98,6 @@ def _write_geojson(df: pd.DataFrame, output_path: Path) -> None:
                 "population_in_hotspots": row["total_population"],
                 "number_of_buildings_in_hotspots": row["building_counts"],
                 "mangrove_area_ha_in_hotspots": row["mangrove_area_ha"],
-                "median_distances": {
-                    str(year): row[f"dist_{year}"] for year in range(1999, 2024)
-                },
             },
         }
         features.append(feature)
@@ -105,6 +110,7 @@ def _write_geojson(df: pd.DataFrame, output_path: Path) -> None:
     s3 = S3FileSystem()
     s3.put(output_path, S3_PATH)
 
+
 def summarise_roc(roc: pd.api.typing.DataFrameGroupBy) -> pd.DataFrame:
     """Create summaries for each group of rates of change points.
 
@@ -112,8 +118,6 @@ def summarise_roc(roc: pd.api.typing.DataFrameGroupBy) -> pd.DataFrame:
         roc: A grouped rates of change dataframe.
 
     Returns: A dataframe with the following columns:
-        - dist_{year} : Median distances for all rates of change points and years
-            where certainty is good. Outlier years are removed from each point.
         - percent_{growth|retreat|stable|growth_non_sig|retreat_non_sig} : The percent
             of points in the corresponding category. Significance is determined
             by the sig_time column.
@@ -121,32 +125,15 @@ def summarise_roc(roc: pd.api.typing.DataFrameGroupBy) -> pd.DataFrame:
             category.
     """
 
-    def get_distance_stats(d: pd.DataFrame):
-        """Calculate median distances for each dist_{year} column in d, across all
-        rows that have certainty "good".
-        """
-        return (
-            d.apply(make_outliers_nan, axis="columns")
-            .loc[
-                d.certainty == "good",
-                d.columns.str.contains("dist_"),
-            ]
-            .count()
-            .round(2)
-        )
-
-    distance_stats = roc.apply(get_distance_stats)
-
-    change_type_percentages = roc.apply(
-        get_change_type_summary, include_groups=False
+    change_type_summary = roc.apply(
+        get_change_type_summary, include_groups=False, summary_type="km"
     ).unstack(fill_value=0)
-    change_magnitude_percentages = roc.apply(
-        get_change_magnitude_summary, include_groups=False
+    change_magnitude_summary = roc.apply(
+        get_change_magnitude_summary, include_groups=False, summary_type="km"
     ).unstack(fill_value=0)
 
-    return distance_stats.join(change_type_percentages).join(
-        change_magnitude_percentages
-    )
+    return change_type_summary.join(change_magnitude_summary)
+
 
 if __name__ == "__main__":
     country_level_stats()
