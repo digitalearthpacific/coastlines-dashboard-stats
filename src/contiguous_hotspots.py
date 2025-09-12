@@ -47,7 +47,6 @@ def main(
     # 3. Split on the boundary and fix in rollup
     #
     # Going with approach #1 for now since it's the easiest to code (I think)
-
     ratesofchange = gpd.read_file(
         coastlines_file, layer="rates_of_change", engine="pyogrio", use_arrow=True
     )
@@ -168,8 +167,9 @@ def calculate_contiguous_hotspots(
     )
 
     # Prep to remove overlapping retreat & growth polygons by
-    # creating voronoi_polygons across all non-zero points and
+    # creating voronoi polygons across all non-zero points and
     # splitting them into retreat and growth geometries.
+    # With current code, threshold implies these are non-zero
     voronoi_nonzero_hotspots = good_hotspots[good_hotspots.rate_time != 0].copy()
     voronoi_nonzero_hotspots["geometry"] = voronoi_polygons(
         # fun fact: MultiPoint preserves order but .union_all() does not
@@ -186,7 +186,7 @@ def calculate_contiguous_hotspots(
         voronoi_nonzero_hotspots.rate_time < 0
     ].geometry.union_all()
 
-    # Select those which showed coastal retreat, union, and split into
+    # Select those which showed coastal retreat. Union and split into
     # non-touching polygons. Then clip by the appropriate voronoi polygon
     # sets.
     retreated_hotspots = buffered_hotspots[buffered_hotspots.rate_time < 0]

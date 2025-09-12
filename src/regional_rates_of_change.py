@@ -28,6 +28,7 @@ def calculate_rates_of_change_over_polygons(
     # take the median of all, calculate stats, and remove outliers there.
     # Or we could do both. Currently we're doing neither, because I'm not
     # sure what the "dist_" stats are being used for (if anything).
+    # 12Sept25 -> they've been removed from anything.
 
     # Taken from hotspot calculations in continental.py. It's possible
     # they're close enough we could have a single function, but there
@@ -65,7 +66,9 @@ def calculate_rates_of_change_over_polygons(
 
     # Join aggregated values back to hotspot points after
     # dropping unused columns (regression intercept)
-    polygons = gpd.GeoDataFrame(polygons.join(hotspot_values.drop("incpt_time", axis=1)))
+    polygons = gpd.GeoDataFrame(
+        polygons.join(hotspot_values.drop("incpt_time", axis=1))
+    )
 
     # Generate a geohash UID for each point and set as index
     uids = (

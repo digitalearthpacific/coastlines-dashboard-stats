@@ -5,7 +5,7 @@ import urllib.request
 import geopandas as gpd
 from pyogrio import read_dataframe
 
-__version__ = "0.0.3"
+__version__ = "0.0.4"
 
 EQUAL_AREA_CRS = 8859
 OUTPUT_DIR = Path("data/output") / __version__
