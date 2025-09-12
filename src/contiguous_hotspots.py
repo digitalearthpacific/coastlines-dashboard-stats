@@ -20,7 +20,15 @@ import xarray as xr
 
 tqdm.pandas()  # turn tqdm on for pandas ops
 
-from config import COASTLINES_FILE, EQUAL_AREA_CRS, OUTPUT_DIR, BUILDINGS, S3_PATH, EEZ
+from config import (
+    CHANGE_THRESHOLD_KM_PER_YR,
+    COASTLINES_FILE,
+    EEZ,
+    EQUAL_AREA_CRS,
+    OUTPUT_DIR,
+    BUILDINGS,
+    S3_PATH,
+)
 from regional_rates_of_change import calculate_rates_of_change_over_polygons
 
 
@@ -124,24 +132,32 @@ def intersect_with_grid(non_point_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     )
 
 
-def calculate_contiguous_hotspots(hotspots: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+def calculate_contiguous_hotspots(
+    hotspots: gpd.GeoDataFrame,
+    lower_change_threshold: float = CHANGE_THRESHOLD_KM_PER_YR,
+) -> gpd.GeoDataFrame:
     """Create non-overlapping sets of like-directioned hotspots.
 
-    Only input points with good certainty and significant relationships are kept.
+    Only input points with good certainty, significant relationships,
+    and absolute change above the lower change threshold area kept.
 
     Args:
         hotspots: A hotspots GeoDataFrame, as would be created by
             dep_coastlines.continental. Should have point geometry and
             sig_time & certainty columns.
+        lower_change_threshold: Rate of change values with absolute change
+            lower than this are removed from processing.
 
     Returns:
         A GeoDataFrame where overlapping shapes are unioned, according to
-        whether they represent growth or retreat. (Note there is no filtering
-        by degree of growth or retreat.)
+        whether they represent growth or retreat.
     """
     # Only keep hotspots with significant change and good certainty
+    # and change above threshold values
     good_hotspots = hotspots[
-        (hotspots.sig_time < 0.01) & (hotspots.certainty == "good")
+        (hotspots.sig_time < 0.01)
+        & (hotspots.certainty == "good")
+        & (abs(hotspots.rate_time) >= lower_change_threshold)
     ][["geometry", "rate_time"]].copy()
 
     radius = hotspots.radius_m.iloc[0]
