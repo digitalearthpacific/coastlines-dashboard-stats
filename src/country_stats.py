@@ -11,6 +11,7 @@ from s3fs import S3FileSystem
 from common import (
     get_change_magnitude_summary,
     get_change_type_summary,
+    remove_exclusions,
 )
 from config import COASTLINES_FILE, EEZ, OUTPUT_DIR, __version__, S3_PATH
 
@@ -43,6 +44,10 @@ def country_level_stats(
     ratesofchange = gpd.read_file(
         coastlines_file, layer="rates_of_change", engine="pyogrio", use_arrow=True
     ).rename(dict(eez_territory="ISO_Ter1"), axis=1)
+
+    # Use all significant rates of change data with high certainty.
+    # We do _not_ filter by the amount of change at this point
+    ratesofchange = remove_exclusions(ratesofchange)
     roc_stats = summarise_roc(ratesofchange.groupby("ISO_Ter1"))
 
     # Estimate bounding box based on economic exclusion zones
@@ -55,11 +60,12 @@ def country_level_stats(
     eez["bbox"] = eez.geometry.to_crs(4326).apply(fix_and_bbox)
 
     output = (
-        hotspot_stats.join(roc_stats)
-        # Do right join here to add countries without hotspots (WLF)
-        .join(eez[["bbox"]], how="right")
-        # NaN are from right join above
-        .fillna(0).reset_index(names="id")
+        # Do right join to add roc stats for countries without hotspots
+        hotspot_stats.join(roc_stats, how="right")
+        .join(eez[["bbox"]])
+        # NaN may exist from right join above
+        .fillna(0)
+        .reset_index(names="id")
     )
     output.to_csv(OUTPUT_DIR / "country_summaries.csv", index=False)
     _write_geojson(output, OUTPUT_DIR / "country_summaries.geojson")

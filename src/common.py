@@ -2,7 +2,24 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 
-from config import CHANGE_THRESHOLD_KM_PER_YR
+from config import CHANGE_THRESHOLD_KM_PER_YR, EXCLUSIONS
+
+
+def remove_exclusions(
+    input_features: gpd.GeoDataFrame, exclusions: gpd.GeoDataFrame = EXCLUSIONS
+) -> gpd.GeoDataFrame:
+    """Remove features that are in the exclusions dataset.
+
+    Args:
+        input_features: Any GeoDataFrame.
+        exclusions: Polygon areas to remove from `input_features`.
+
+    Returns:
+        The input features with features that are in `exclusions` removed.
+
+    """
+    masked = input_features.geometry.apply(lambda geom: exclusions.contains(geom).any())
+    return input_features.loc[~masked]
 
 
 def make_outliers_nan(row: pd.Series):

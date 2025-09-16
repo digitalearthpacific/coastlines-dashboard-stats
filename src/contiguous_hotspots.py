@@ -20,13 +20,15 @@ import xarray as xr
 
 tqdm.pandas()  # turn tqdm on for pandas ops
 
+from common import remove_exclusions
+
 from config import (
+    BUILDINGS,
     CHANGE_THRESHOLD_KM_PER_YR,
     COASTLINES_FILE,
     EEZ,
     EQUAL_AREA_CRS,
     OUTPUT_DIR,
-    BUILDINGS,
     S3_PATH,
 )
 from regional_rates_of_change import calculate_rates_of_change_over_polygons
@@ -38,6 +40,8 @@ def main(
     hotspots = gpd.read_file(
         coastlines_file, layer=hotspots_layer, engine="pyogrio", use_arrow=True
     )
+    hotspots = remove_exclusions(hotspots)
+
     contiguous_hotspots = calculate_contiguous_hotspots(hotspots)
     # At issue is how to deal with hotspots which cross grid boundaries.
     # A few approaches:
@@ -88,7 +92,15 @@ def main(
         .reindex(contiguous_hotspots.index, fill_value=0)
     )
 
+    # Add country code
     contiguous_hotspots = contiguous_hotspots.sjoin(EEZ[["geometry", "ISO_Ter1"]])
+
+    # remove features duplicated across grid cells
+    contiguous_hotspots = gpd.GeoDataFrame(
+        contiguous_hotspots.groupby("uid").first(),
+        geometry="geometry",
+        crs=contiguous_hotspots.crs,
+    )
 
     contiguous_hotspots_geopackage = OUTPUT_DIR / "contiguous_hotspots.gpkg"
     contiguous_hotspots.to_file(contiguous_hotspots_geopackage)
@@ -159,7 +171,8 @@ def calculate_contiguous_hotspots(
         & (abs(hotspots.rate_time) >= lower_change_threshold)
     ][["geometry", "rate_time"]].copy()
 
-    radius = hotspots.radius_m.iloc[0]
+    #    radius = hotspots.radius_m.iloc[0]
+    radius = 500
     # Buffer each by the original hotspot radius
     buffered_hotspots = good_hotspots.copy()
     buffered_hotspots["geometry"] = buffered_hotspots.geometry.buffer(
