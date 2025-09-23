@@ -2,7 +2,7 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 
-from config import CHANGE_THRESHOLD_KM_PER_YR, EXCLUSIONS
+from src.config import CHANGE_THRESHOLD_KM_PER_YR, EXCLUSIONS
 
 
 def remove_exclusions(
@@ -104,16 +104,33 @@ def _calculate_km_of_each_value(series: pd.Series):
     return output.round(2)
 
 
+def _calculate_cumulative_km_of_each_value(series: pd.Series) -> pd.Series:
+    km_of_each = _calculate_km_of_each_value(series)
+    # This syntax is needed to fill missings. I tried to index with fill=0 but
+    # the join didn't work afterwards and everything looked exactly the same
+    km_of_each["medium_change_km"] = km_of_each.get(
+        "high_change_km", 0
+    ) + km_of_each.get("medium_change_km", 0)
+
+    # medium now includes medium + high
+    km_of_each["low_change_km"] = km_of_each.get("low_change_km", 0) + km_of_each.get(
+        "medium_change_km", 0
+    )
+    return km_of_each.round(2)
+
+
 def get_change_magnitude_summary(
     roc: gpd.GeoDataFrame,
     no_change_threshold: int | float = CHANGE_THRESHOLD_KM_PER_YR,
-    summary_type="km",
+    summary_type="cumulative_km",
 ):
-    summariser = (
-        _calculate_percent_of_each_value
-        if summary_type == "percent"
-        else _calculate_km_of_each_value
-    )
+    match summary_type:
+        case "km":
+            summariser = _calculate_km_of_each_value
+        case "cumulative_km":
+            summariser = _calculate_cumulative_km_of_each_value
+        case _:
+            summariser = _calculate_percent_of_each_value
     return summariser(categorize_change_magnitude(roc, no_change_threshold))
 
 
