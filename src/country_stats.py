@@ -31,9 +31,12 @@ def country_level_stats(
     """
     # Sum population, buildings, and mangrove area in all contiguous hotspots
     # in the entire country
+    hotspots = gpd.read_file(OUTPUT_DIR / "contiguous_hotspots.gpkg")
+    # Only select 2 and above hotspots; they contain all the areas.
+    hotspots = hotspots[abs(hotspots.rate_time) == 2.5]
+
     hotspot_stats = (
-        gpd.read_file(OUTPUT_DIR / "contiguous_hotspots.gpkg")
-        .groupby("ISO_Ter1")[
+        hotspots.groupby("ISO_Ter1")[
             ["total_population", "building_counts", "mangrove_area_ha"]
         ]
         .sum()
@@ -135,7 +138,7 @@ def summarise_roc(roc: pd.api.typing.DataFrameGroupBy) -> pd.DataFrame:
         get_change_type_summary, include_groups=False, summary_type="km"
     ).unstack(fill_value=0)
     change_magnitude_summary = roc.apply(
-        get_change_magnitude_summary, include_groups=False, summary_type="km"
+        get_change_magnitude_summary, include_groups=False, summary_type="cumulative_km"
     ).unstack(fill_value=0)
 
     return change_type_summary.join(change_magnitude_summary)

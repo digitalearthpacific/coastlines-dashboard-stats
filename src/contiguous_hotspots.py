@@ -7,6 +7,7 @@ from antimeridian import fix_multi_polygon, fix_polygon
 from dep_tools.grids import grid
 from dep_tools.utils import search_across_180
 from exactextract import exact_extract
+import geohash as gh
 import geopandas as gpd
 import numpy as np
 import odc.stac
@@ -20,9 +21,9 @@ import xarray as xr
 
 tqdm.pandas()  # turn tqdm on for pandas ops
 
-from common import remove_exclusions
+from src.common import remove_exclusions
 
-from config import (
+from src.config import (
     BUILDINGS,
     CHANGE_THRESHOLD_KM_PER_YR,
     COASTLINES_FILE,
@@ -31,7 +32,6 @@ from config import (
     OUTPUT_DIR,
     S3_PATH,
 )
-from regional_rates_of_change import calculate_rates_of_change_over_polygons
 
 
 def main(
@@ -42,7 +42,12 @@ def main(
     )
     hotspots = remove_exclusions(hotspots)
 
-    contiguous_hotspots = calculate_contiguous_hotspots(hotspots)
+    low_hotspots = calculate_contiguous_hotspots(hotspots, 2.5, 2)
+    med_hotspots = calculate_contiguous_hotspots(hotspots, 4, 3)
+    high_hotspots = calculate_contiguous_hotspots(hotspots, 6, 5)
+    contiguous_hotspots = pd.concat(
+        [low_hotspots, med_hotspots, high_hotspots], ignore_index=True
+    )
     # At issue is how to deal with hotspots which cross grid boundaries.
     # A few approaches:
     # 1. Calculate twice and only take one value
@@ -51,55 +56,63 @@ def main(
     # 3. Split on the boundary and fix in rollup
     #
     # Going with approach #1 for now since it's the easiest to code (I think)
-    ratesofchange = gpd.read_file(
-        coastlines_file, layer="rates_of_change", engine="pyogrio", use_arrow=True
+    #    ratesofchange = gpd.read_file(
+    #        coastlines_file, layer="rates_of_change", engine="pyogrio", use_arrow=True
+    #    )
+    #
+    #    contiguous_hotspots = calculate_rates_of_change_over_polygons(
+    #        contiguous_hotspots, ratesofchange
+    #    )
+    #
+    #    # Drop distance columns to save space
+    #    cols_to_drop = [
+    #        col for col in contiguous_hotspots.columns if col.startswith("dist_")
+    #    ]
+    #    contiguous_hotspots = gpd.GeoDataFrame(
+    #        contiguous_hotspots.drop(columns=cols_to_drop)
+    #    )
+    uids = (
+        # collapsing to centroid here
+        contiguous_hotspots.geometry.centroid.to_crs("EPSG:4326")
+        .apply(lambda x: gh.encode(x.y, x.x, precision=11))
+        .rename("uid")
     )
 
-    contiguous_hotspots = calculate_rates_of_change_over_polygons(
-        contiguous_hotspots, ratesofchange
-    )
-
-    # Drop distance columns to save space
-    cols_to_drop = [
-        col for col in contiguous_hotspots.columns if col.startswith("dist_")
-    ]
-    contiguous_hotspots = gpd.GeoDataFrame(
-        contiguous_hotspots.drop(columns=cols_to_drop)
-    )
-
+    contiguous_hotspots["uid"] = uids
+    contiguous_hotspots["building_counts"] = count_buildings(contiguous_hotspots)
     contiguous_hotspots = intersect_with_grid(contiguous_hotspots)
+
+    # Get total mangrove area for each contiguous hotspot
+    mangrove_area_ha = (
+        contiguous_hotspots.groupby(["column", "row"], group_keys=False)
+        .progress_apply(mangroves_area, cols_to_keep=["uid"])
+        .rename(columns=dict(sum="mangrove_area_ha"))
+    )
+    mangrove_area_ha = mangrove_area_ha.groupby("uid").first()
+    contiguous_hotspots = contiguous_hotspots.join(mangrove_area_ha, on="uid")
 
     # Get total population for each contiguous hotspot
     # Process by each column-row, to conserve loading time
-    total_pop = contiguous_hotspots.groupby(
-        ["column", "row"], group_keys=False
-    ).progress_apply(total_population)
+    total_pop = (
+        contiguous_hotspots.groupby(["column", "row"], group_keys=False)
+        .progress_apply(total_population)
+        .rename(columns=dict(sum="total_population"))
+    )
     # Duplicate indices here, but data are the same
-    contiguous_hotspots["total_population"] = (
-        total_pop.groupby(total_pop.index)
-        .first()
-        .reindex(contiguous_hotspots.index, fill_value=0)
-    )
+    total_pop = total_pop.groupby("uid").first()
+    contiguous_hotspots = contiguous_hotspots.join(total_pop, on="uid")
 
-    # Get total mangrove area for each contiguous hotspot
-    contiguous_hotspots["building_counts"] = count_buildings(contiguous_hotspots)
-    mangrove_area_ha = contiguous_hotspots.groupby(
-        ["column", "row"], group_keys=False
-    ).progress_apply(mangroves_area)
-    contiguous_hotspots["mangrove_area_ha"] = (
-        mangrove_area_ha.groupby(mangrove_area_ha.index)
-        .first()
-        .reindex(contiguous_hotspots.index, fill_value=0)
-    )
+    # Calculate area of each hotspot
+    ha_per_sqm = 1 / 10_000
+    equal_area_contiguous_hotspots = contiguous_hotspots.to_crs(EQUAL_AREA_CRS)
+    contiguous_hotspots["area_ha"] = equal_area_contiguous_hotspots.area * ha_per_sqm
 
     # Add country code
     contiguous_hotspots = contiguous_hotspots.sjoin(EEZ[["geometry", "ISO_Ter1"]])
 
-    # remove features duplicated across grid cells
-    contiguous_hotspots = gpd.GeoDataFrame(
-        contiguous_hotspots.groupby("uid").first(),
-        geometry="geometry",
-        crs=contiguous_hotspots.crs,
+    # clean up columns
+    contiguous_hotspots = contiguous_hotspots.drop(
+        columns=["index_right", "column", "row"]
     )
 
     contiguous_hotspots_geopackage = OUTPUT_DIR / "contiguous_hotspots.gpkg"
@@ -145,17 +158,19 @@ def intersect_with_grid(non_point_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 
 def calculate_contiguous_hotspots(
     hotspots: gpd.GeoDataFrame,
+    rate_time: float,
     lower_change_threshold: float = CHANGE_THRESHOLD_KM_PER_YR,
+    upper_change_threshold: float = 1000,
 ) -> gpd.GeoDataFrame:
-    """Create non-overlapping sets of like-directioned hotspots.
+    """Create non-overlapping sets of like-directioned hotspots /
+    rates of change data.
 
     Only input points with good certainty, significant relationships,
     and absolute change above the lower change threshold area kept.
 
     Args:
-        hotspots: A hotspots GeoDataFrame, as would be created by
-            dep_coastlines.continental. Should have point geometry and
-            sig_time & certainty columns.
+        hotspots: A GeoDataFrame containing hotspots or rates of change
+            data. Should have point geometry and sig_time & certainty columns.
         lower_change_threshold: Rate of change values with absolute change
             lower than this are removed from processing.
 
@@ -169,6 +184,7 @@ def calculate_contiguous_hotspots(
         (hotspots.sig_time < 0.01)
         & (hotspots.certainty == "good")
         & (abs(hotspots.rate_time) >= lower_change_threshold)
+        & (abs(hotspots.rate_time) < upper_change_threshold)
     ][["geometry", "rate_time"]].copy()
 
     #    radius = hotspots.radius_m.iloc[0]
@@ -210,6 +226,7 @@ def calculate_contiguous_hotspots(
         )
         .explode(ignore_index=True)
         .clip(closer_to_retreat)
+        .assign(rate_time=-rate_time)
     )
 
     # Do the same for those which showed coastal growth
@@ -221,6 +238,7 @@ def calculate_contiguous_hotspots(
         )
         .explode(ignore_index=True)
         .clip(closer_to_growth)
+        .assign(rate_time=rate_time)
     )
 
     # combine and return
@@ -245,16 +263,14 @@ def count_buildings(
         A series indexed the same as `gdf`, with the value representing
         the count of building features in the corresponding polygon.
     """
-    return pd.Series(
-        gdf.sjoin(buildings.to_crs(str(gdf.crs)))
-        .reset_index(names=["index"])
-        .groupby("index")["index_right"]
-        .count()
+    return (
+        gdf.sjoin(buildings.to_crs(gdf.crs))
+        .index.value_counts()
         .reindex(gdf.index, fill_value=0)
     )
 
 
-def mangroves_area(gdf: gpd.GeoDataFrame):
+def mangroves_area(gdf: gpd.GeoDataFrame, cols_to_keep: list[str] = ["uid"]):
     """Calculate the area of mangroves in each shape of a GeoDataFrame.
 
     Areas are calculated using the DE Pacific Mangroves product for 2024. Areas
@@ -273,6 +289,9 @@ def mangroves_area(gdf: gpd.GeoDataFrame):
     )
     if len(items) == 0:
         output = pd.DataFrame(np.zeros((len(gdf), 1)), columns=["sum"])
+        output.index = gdf.index
+        for col in cols_to_keep:
+            output[col] = gdf[col]
     else:
         dep_s2_mangrove_codes = [1, 2]
         mangroves = (
@@ -287,38 +306,50 @@ def mangroves_area(gdf: gpd.GeoDataFrame):
         cell_area_ha = cell_area_sqm * ha_per_sqm
         mangroves_area_ha = mangroves * cell_area_ha
         output = exact_extract(
-            mangroves_area_ha, gdf.to_crs(mangroves.odc.crs), ["sum"], output="pandas"
+            mangroves_area_ha,
+            gdf.to_crs(mangroves.odc.crs),
+            ["sum"],
+            output="pandas",
+            include_cols=cols_to_keep,
         )
         # exact_extract doesn't preserve index
-    output.index = gdf.index
+        output.index = gdf.index
     return output
 
 
-def total_population(gdf: gpd.GeoDataFrame):
+def total_population(gdf: gpd.GeoDataFrame, cols_to_keep: list[str] = ["uid"]):
     print(f"{gdf.column.iloc[0]},{gdf.row.iloc[0]}")
     client = pystac_client.Client.open("https://stac.staging.digitalearthpacific.io")
     items = search_across_180(gdf, client, collections=["dep_pdhhdx_population"])
     if len(items) == 0:
-        return pd.DataFrame(np.zeros((1, 1)), columns=["sum"])
-    pop_per_sqkm = (
-        odc.stac.load(items, crs=EQUAL_AREA_CRS, geopolygon=gdf.to_crs(EQUAL_AREA_CRS))
-        .max(dim="time")
-        .squeeze(drop=True)
-        .pop_per_sqkm
-    )
-    sqkm_per_sqm = 1 / 1_000_000
-    cell_area_sqm = abs(np.prod(pop_per_sqkm.odc.geobox.resolution.xy)).item()
-    cell_area_sqkm = cell_area_sqm * sqkm_per_sqm
-    area_sqkm = xr.ones_like(pop_per_sqkm) * cell_area_sqkm
-    pop_count = pop_per_sqkm * area_sqkm
-    output = exact_extract(
-        pop_count,
-        gdf.to_crs(pop_count.odc.crs),
-        ["sum"],
-        output="pandas",
-    )
-    # exact_extract doesn't preserve index
-    output.index = gdf.index
+        output = pd.DataFrame(np.zeros((len(gdf), 1)), columns=["sum"])
+        output.index = gdf.index
+        for col in cols_to_keep:
+            output[col] = gdf[col]
+
+    else:
+        pop_per_sqkm = (
+            odc.stac.load(
+                items, crs=EQUAL_AREA_CRS, geopolygon=gdf.to_crs(EQUAL_AREA_CRS)
+            )
+            .max(dim="time")
+            .squeeze(drop=True)
+            .pop_per_sqkm
+        )
+        sqkm_per_sqm = 1 / 1_000_000
+        cell_area_sqm = abs(np.prod(pop_per_sqkm.odc.geobox.resolution.xy)).item()
+        cell_area_sqkm = cell_area_sqm * sqkm_per_sqm
+        area_sqkm = xr.ones_like(pop_per_sqkm) * cell_area_sqkm
+        pop_count = pop_per_sqkm * area_sqkm
+        output = exact_extract(
+            pop_count,
+            gdf.to_crs(pop_count.odc.crs),
+            ["sum"],
+            output="pandas",
+            include_cols=cols_to_keep,
+        )
+        # exact_extract doesn't preserve index
+        output.index = gdf.index
     return output
 
 
@@ -347,4 +378,4 @@ def build_tiles(stats: gpd.GeoDataFrame, output_file: Path) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main(hotspots_layer="rates_of_change")

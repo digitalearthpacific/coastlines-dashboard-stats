@@ -5,7 +5,7 @@ import urllib.request
 import geopandas as gpd
 from pyogrio import read_dataframe
 
-__version__ = "0.0.6"
+__version__ = "0.0.8"
 
 EQUAL_AREA_CRS = 8859
 OUTPUT_DIR = Path("data/output") / __version__
@@ -28,9 +28,9 @@ EEZ = gpd.read_file(eez_file).to_crs(3832)
 
 buildings_file = Path("data/dep_buildings_0-1-1.gpkg")
 if not buildings_file.exists():
-    remote_buildings_file = "https://dep-public-staging.s3.us-west-2.amazonaws.com/dep_osm_buildings/dep_buildings_0-1-0.gpkg"
+    remote_buildings_file = "https://dep-public-staging.s3.us-west-2.amazonaws.com/dep_osm_buildings/dep_buildings_0-1-1.gpkg"
     urllib.request.urlretrieve(remote_buildings_file, buildings_file)
-BUILDINGS = gpd.read_file(buildings_file).to_crs(EQUAL_AREA_CRS)
+BUILDINGS = gpd.read_file(buildings_file)
 
 exclusion_file = Path("data/areas_to_exclude.gpkg")
 EXCLUSIONS = gpd.read_file("data/areas_to_exclude.gpkg").to_crs(3832)
