@@ -13,7 +13,7 @@ from common import (
     get_change_type_summary,
     remove_exclusions,
 )
-from config import COASTLINES_FILE, EEZ, OUTPUT_DIR, __version__, S3_PATH
+from config import COASTLINES_FILE, EEZ, OUTPUT_DIR, S3_PATH
 
 
 def country_level_stats(
@@ -44,7 +44,7 @@ def country_level_stats(
     )
 
     # calculate bbox from the footprint of the hotspots
-    hotspot_stats["bbox"] = hotspots.to_crs(4326).groupby("ISO_Ter1").apply(lambda set: set.total_bounds, include_groups=True)
+    hotspot_stats["bbox"] = hotspots.to_crs(4326).groupby("ISO_Ter1").apply(lambda set: set.total_bounds.tolist(), include_groups=True)
 
     # Summarise km of different roc categories
     ratesofchange = gpd.read_file(
