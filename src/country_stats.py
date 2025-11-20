@@ -13,7 +13,7 @@ from common import (
     get_change_type_summary,
     remove_exclusions,
 )
-from config import COASTLINES_FILE, EEZ, OUTPUT_DIR, __version__, S3_PATH
+from config import COASTLINES_FILE, EEZ, OUTPUT_DIR, S3_PATH
 
 
 def country_level_stats(
@@ -43,6 +43,9 @@ def country_level_stats(
         .round(2)
     )
 
+    # calculate bbox from the footprint of the hotspots
+    hotspot_stats["bbox"] = hotspots.to_crs(4326).groupby("ISO_Ter1").apply(lambda set: set.total_bounds.tolist(), include_groups=True)
+
     # Summarise km of different roc categories
     ratesofchange = gpd.read_file(
         coastlines_file, layer="rates_of_change", engine="pyogrio", use_arrow=True
@@ -53,19 +56,9 @@ def country_level_stats(
     ratesofchange = remove_exclusions(ratesofchange)
     roc_stats = summarise_roc(ratesofchange.groupby("ISO_Ter1"))
 
-    # Estimate bounding box based on economic exclusion zones
-    eez = eez.dissolve(by="ISO_Ter1")
-
-    def fix_and_bbox(geometry):
-        fixer = fix_polygon if geometry.geom_type == "Polygon" else fix_multi_polygon
-        return bbox(fixer(geometry), force_over_antimeridian=True)
-
-    eez["bbox"] = eez.geometry.to_crs(4326).apply(fix_and_bbox)
-
     output = (
         # Do right join to add roc stats for countries without hotspots
         hotspot_stats.join(roc_stats, how="right")
-        .join(eez[["bbox"]])
         # NaN may exist from right join above
         .fillna(0)
         .reset_index(names="id")
